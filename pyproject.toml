@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "django-po-tools"
+version = "1.4.2"
+description = "Django translation management and auto-translation tools"
+readme = "README.md"
+authors = [
+    {name = "Mario Orlandi", email = "morlandi@brainstorm.it"},
+]
+license = {text = "GPL-3.0-or-later"}
+requires-python = ">=3.8"
+keywords = ["django", "i18n", "l10n", "translation", "gettext", "po", "mo"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Framework :: Django",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Internationalization",
+    "Topic :: Software Development :: Localization",
+]
+dependencies = [
+    "polib",
+    "googletrans==4.0.0-rc1",
+]
+
+[project.urls]
+Homepage = "https://github.com/brainstorm-srl/django-po-tools"
+Repository = "https://github.com/brainstorm-srl/django-po-tools"
+Issues = "https://github.com/brainstorm-srl/django-po-tools/issues"
+
+[project.scripts]
+djmessages = "django_po_tools.messages:main"
+po-auto-translate = "django_po_tools.po_auto_translate:main"
