@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "django-po-tools"
-version = "1.5.1"
+version = "1.5.2"
 description = "Django translation management and auto-translation tools"
 readme = "README.md"
 authors = [
