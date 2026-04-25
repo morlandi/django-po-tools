@@ -45,10 +45,10 @@ Available languages are read automatically from `LANGUAGES` in your Django setti
 ### Usage
 
 ```
-djmessages <command> -a <app> [app ...] -l <lang> [lang ...]
+djmessages <command> [-a <app> [app ...]] [-l <lang> [lang ...]]
 ```
 
-Use `all` as a shortcut for all configured apps or languages.
+If `-a` or `-l` are omitted, all configured apps or languages are used.
 
 ### Commands
 
@@ -59,7 +59,7 @@ Use `all` as a shortcut for all configured apps or languages.
 | `collect` | Copy `.po` files into `translations_target_folder` for external translation |
 | `install` | Copy `.po` files back from `translations_target_folder` into each app's `locale/` |
 | `remove` | Delete the `locale/<lang>/` folder for the given apps |
-| `auto_translate` | Auto-translate untranslated entries in `.po` files (calls `po-auto-translate`) |
+| `autotranslate` | Auto-translate untranslated entries in `.po` files (calls `po-auto-translate`) |
 
 ### Options
 
@@ -77,14 +77,14 @@ Use `all` as a shortcut for all configured apps or languages.
 # Extract strings for Italian and Spanish in two apps
 djmessages make -a frontend main -l it es
 
-# Compile all languages for all apps
-djmessages compile -a all -l all
+# Compile all languages for all apps (options omitted = all)
+djmessages compile
 
-# Auto-translate missing strings, mark as fuzzy for review
-djmessages auto_translate -a frontend -l it es --fuzzy
+# Auto-translate missing strings in one app, mark as fuzzy for review
+djmessages autotranslate -a frontend -l it es --fuzzy
 
 # Dry-run: see what collect would do without touching files
-djmessages collect -a all -l all --dry-run
+djmessages collect --dry-run
 ```
 
 ---

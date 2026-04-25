@@ -14,6 +14,7 @@ import argparse
 import importlib
 import os
 import shutil
+import sys
 import configparser
 
 from django_po_tools.po_auto_translate import translate_po_file
@@ -290,6 +291,7 @@ def main():
     available_apps = config.get("general", "apps").split(", ")
 
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", settings_module)
+    sys.path.insert(0, os.getcwd())
     available_languages = list_available_languages(settings_module)
 
     # Parse command line
@@ -307,7 +309,7 @@ def main():
         "collect":        "copy .po files into the translations target folder",
         "install":        "copy .po files from the translations target folder into the app locale folders",
         "remove":         "remove the locale/LANGUAGE folder (and its .po/.mo files) for the given app(s)",
-        "auto_translate": "auto-translate untranslated strings in .po files using an AI service",
+        "autotranslate": "auto-translate untranslated strings in .po files using an AI service",
     }
 
     command_help = "\n".join(
@@ -353,30 +355,20 @@ def main():
     if parsed.dry_run:
         DRY_RUN = True
 
-    # Load app list from "apps" option
+    # Load app list from "apps" option (default: all)
     apps = []
-    if parsed.apps is None:
-        print('Specify one or more apps (-a option), or "all"')
-        return -1
-    for app in parsed.apps:
-        if app == "all":
-            apps += available_apps
-        elif app in available_apps:
+    for app in (parsed.apps or available_apps):
+        if app in available_apps:
             apps.append(app)
         else:
             raise Exception('Unknown app "%s"' % app)
     apps = list(set(apps))
 
-    # Load language list from "languages" option
+    # Load language list from "languages" option (default: all)
     languages = []
-    if parsed.languages is None:
-        print('Specify one or more language (-l option), or "all"')
-        return -1
-    for language in parsed.languages:
+    for language in (parsed.languages or available_languages):
         language = normalize_language(language)
-        if language == "all":
-            languages += available_languages
-        elif language in available_languages:
+        if language in available_languages:
             languages.append(language)
         else:
             raise Exception('Unknown language "%s"' % language)
@@ -395,7 +387,7 @@ def main():
         do_collectmessages(apps, languages, translations_target_folder)
     elif command == "install":
         do_installmessages(apps, languages, translations_target_folder)
-    elif command == "auto_translate":
+    elif command == "autotranslate":
         do_auto_translatemessages(apps, languages, parsed.fuzzy)
     elif command == "remove":
         do_removemessages(apps, languages)
