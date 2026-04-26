@@ -6,7 +6,6 @@ Utility script to manage messages in Django
 """
 
 __author__ = "Mario Orlandi"
-__version__ = "1.4.2"
 __copyright__ = "Copyright (c) 2016-2026, Brainstorm S.r.l."
 __license__ = "GPL"
 
@@ -17,7 +16,7 @@ import shutil
 import sys
 import configparser
 
-from django_po_tools.po_auto_translate import translate_po_file
+from django_po_tools.po_auto_translate import translate_po_file, gather_project_context
 
 DRY_RUN = False
 
@@ -62,6 +61,15 @@ project={project}
 settings_module={project}.settings
 translations_target_folder=../translations
 apps=app1, app2
+
+[autotranslate]
+# Translation engine: google (default) or claude
+engine=google
+# Application domain — used by Claude to choose appropriate terminology
+# Example: paint dosing systems for the construction industry
+domain=
+# Anthropic API key (can also be set via ANTHROPIC_API_KEY environment variable)
+anthropic_api_key=
 """
         cwd = os.getcwd()
         project = os.path.split(cwd)[-1]
@@ -143,17 +151,37 @@ def do_makemessages(apps, languages):
         run_command(command)
 
 
-def do_auto_translatemessages(apps, languages, fuzzy):
+def do_auto_translatemessages(apps, languages, fuzzy, engine="google", project_path=None, api_key=None, batch_size=500, model="claude-haiku-4-5-20251001", domain=""):
+    # Gather project context once for all apps/languages (Claude engine only)
+    project_context = None
+    if engine == "claude" and not DRY_RUN:
+        if project_path is None:
+            project_path = os.getcwd()
+        print("Gathering project context from: %s" % project_path)
+        project_context = gather_project_context(project_path)
+        print("Context gathered: %d chars" % len(project_context))
+
     for app in apps:
         app_path = get_app_path(app)
         for language in languages:
             po_file = os.path.join(app_path, "locale", language, "LC_MESSAGES", "django.po")
             po_file = os.path.normpath(po_file)
-            print("\x1b[1;37;40mpo-auto-translate %s%s\x1b[0m" % (
-                po_file, " --fuzzy" if fuzzy else ""
+            engine_info = " --engine %s" % engine if engine != "google" else ""
+            print("\x1b[1;37;40mpo-auto-translate %s%s%s\x1b[0m" % (
+                po_file, " --fuzzy" if fuzzy else "", engine_info
             ))
             if not DRY_RUN:
-                translate_po_file(po_file, fuzzy=fuzzy)
+                translate_po_file(
+                    po_file,
+                    fuzzy=fuzzy,
+                    engine=engine,
+                    project_path=project_path,
+                    project_context=project_context,
+                    api_key=api_key,
+                    batch_size=batch_size,
+                    model=model,
+                    domain=domain,
+                )
 
 
 def do_compilemessages(apps, languages):
@@ -290,6 +318,17 @@ def main():
     settings_module = config.get("general", "settings_module").strip()
     available_apps = config.get("general", "apps").split(", ")
 
+    # [autotranslate] section — all optional, with fallbacks
+    def _conf(key, fallback=""):
+        try:
+            return config.get("autotranslate", key).strip()
+        except (configparser.NoSectionError, configparser.NoOptionError):
+            return fallback
+
+    config_engine = _conf("engine", "google")
+    config_domain = _conf("domain", "")
+    config_api_key = _conf("anthropic_api_key", "")
+
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", settings_module)
     sys.path.insert(0, os.getcwd())
     available_languages = list_available_languages(settings_module)
@@ -335,7 +374,7 @@ def main():
         "--fuzzy",
         action="store_true",
         default=False,
-        help="Set fuzzy flag for new translations (only for auto_translate command)",
+        help="Set fuzzy flag for new translations (only for autotranslate command)",
     )
     parser.add_argument(
         "-d",
@@ -346,6 +385,43 @@ def main():
     )
     parser.add_argument("-a", "--apps", nargs="*", required=False)
     parser.add_argument("-l", "--languages", nargs="*", required=False)
+    parser.add_argument(
+        "--engine",
+        choices=["google", "claude"],
+        default=config_engine or "google",
+        help="Translation engine for autotranslate: 'google' (default) or 'claude' "
+             "(requires anthropic package and ANTHROPIC_API_KEY env var). "
+             "Can be set in djmessages.conf [autotranslate] engine=",
+    )
+    parser.add_argument(
+        "--domain",
+        default=None,
+        help="Application domain description used by Claude to choose appropriate terminology "
+             "(e.g. 'paint dosing systems for the construction industry'). "
+             "Can be set in djmessages.conf [autotranslate] domain=",
+    )
+    parser.add_argument(
+        "--project-path",
+        default=None,
+        help="Root of the Django project to scan for context (autotranslate + claude engine only). "
+             "Defaults to the current working directory.",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="Anthropic API key (overrides ANTHROPIC_API_KEY env var and djmessages.conf, claude engine only)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=500,
+        help="Number of strings per Claude API call (default: 500, claude engine only)",
+    )
+    parser.add_argument(
+        "--model",
+        default="claude-haiku-4-5-20251001",
+        help="Anthropic model to use (default: claude-haiku-4-5-20251001, claude engine only)",
+    )
     parsed = parser.parse_args()
 
     command = parsed.command
@@ -388,7 +464,19 @@ def main():
     elif command == "install":
         do_installmessages(apps, languages, translations_target_folder)
     elif command == "autotranslate":
-        do_auto_translatemessages(apps, languages, parsed.fuzzy)
+        project_path = parsed.project_path or os.getcwd()
+        # CLI args take priority over djmessages.conf values
+        api_key = parsed.api_key or config_api_key or None
+        domain = parsed.domain or config_domain or ""
+        do_auto_translatemessages(
+            apps, languages, parsed.fuzzy,
+            engine=parsed.engine,
+            project_path=project_path,
+            api_key=api_key,
+            batch_size=parsed.batch_size,
+            model=parsed.model,
+            domain=domain,
+        )
     elif command == "remove":
         do_removemessages(apps, languages)
     else:

@@ -31,8 +31,11 @@ classifiers = [
 ]
 dependencies = [
     "polib",
-    "googletrans==4.0.0-rc1",
+    "deep-translator",
 ]
+
+[project.optional-dependencies]
+claude = ["anthropic"]
 
 [project.urls]
 Homepage = "https://github.com/brainstorm-srl/django-po-tools"
