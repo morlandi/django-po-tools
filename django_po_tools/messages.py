@@ -12,6 +12,7 @@ __license__ = "GPL"
 import argparse
 import importlib
 import os
+import re
 import shutil
 import sys
 import configparser
@@ -237,6 +238,115 @@ def do_collectmessages(apps, languages, target_folder):
             print("    %-12.12s %s" % (message, target_path))
 
 
+def clear_fuzzy_in_po_file(po_file, dry_run=False):
+    """
+    Prepare fuzzy entries in a .po file for re-translation:
+    - Remove the 'fuzzy' flag from '#, fuzzy' lines (drop the line if fuzzy was the only flag)
+    - Remove '#| ...' lines (previous msgid/msgstr comments, including continuation lines)
+    - Clear msgstr values to "" (including msgstr[N] for plural forms and their continuation lines)
+
+    Returns the number of fuzzy entries processed.
+    """
+    with open(po_file, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    output = []
+    in_fuzzy = False
+    clearing_msgstr = False
+    count = 0
+    n = len(lines)
+
+    i = 0
+    while i < n:
+        line = lines[i]
+        stripped = line.strip()
+
+        # Blank line → end of entry
+        if not stripped:
+            in_fuzzy = False
+            clearing_msgstr = False
+            output.append(line)
+            i += 1
+            continue
+
+        # Detect '#, fuzzy' (alone or combined with other flags)
+        if stripped.startswith("#,") and "fuzzy" in [f.strip() for f in stripped[2:].split(",")]:
+            # Look ahead to find the msgid of this entry; skip if it is the
+            # file header (msgid ""), whose msgstr continuation lines hold
+            # charset/encoding metadata that must not be erased.
+            is_header = False
+            for j in range(i + 1, n):
+                fs = lines[j].strip()
+                if fs.startswith("msgid"):
+                    is_header = fs == 'msgid ""'
+                    break
+                if not fs:  # malformed: blank before msgid
+                    break
+
+            if is_header:
+                output.append(line)
+                i += 1
+                continue
+
+            in_fuzzy = True
+            clearing_msgstr = False
+            count += 1
+            other_flags = [f.strip() for f in stripped[2:].split(",") if f.strip() != "fuzzy"]
+            if other_flags:
+                output.append("#, " + ", ".join(other_flags) + "\n")
+            # else: drop the '#, fuzzy' line entirely
+            i += 1
+            continue
+
+        if in_fuzzy:
+            # Remove '#| ...' lines (previous value comments)
+            if stripped.startswith("#|"):
+                i += 1
+                continue
+
+            # Clear msgstr / msgstr[N] and their continuation lines
+            m_msgstr = re.match(r"^(msgstr(?:\[\d+\])?)", stripped)
+            if m_msgstr:
+                output.append('%s ""\n' % m_msgstr.group(1))
+                clearing_msgstr = True
+                i += 1
+                continue
+
+            if clearing_msgstr and stripped.startswith('"'):
+                i += 1
+                continue  # skip continuation lines of a cleared msgstr
+            else:
+                clearing_msgstr = False
+
+        output.append(line)
+        i += 1
+
+    if count == 0:
+        print("  No fuzzy entries found in: %s" % po_file)
+        return 0
+
+    print(
+        "  %d fuzzy %s cleared in: %s"
+        % (count, "entry" if count == 1 else "entries", po_file)
+    )
+    if not dry_run:
+        with open(po_file, "w", encoding="utf-8") as f:
+            f.writelines(output)
+
+    return count
+
+
+def do_unfuzzy(apps, languages):
+    for app in apps:
+        app_path = get_app_path(app)
+        for language in languages:
+            po_file = os.path.join(app_path, "locale", language, "LC_MESSAGES", "django.po")
+            po_file = os.path.normpath(po_file)
+            print("\x1b[1;37;40munfuzzy %s\x1b[0m" % po_file)
+            if not DRY_RUN:
+                clear_fuzzy_in_po_file(po_file)
+
+
 def do_removemessages(apps, languages):
     for app in apps:
         app_path = get_app_path(app)
@@ -348,7 +458,8 @@ def main():
         "collect":        "copy .po files into the translations target folder",
         "install":        "copy .po files from the translations target folder into the app locale folders",
         "remove":         "remove the locale/LANGUAGE folder (and its .po/.mo files) for the given app(s)",
-        "autotranslate": "auto-translate untranslated strings in .po files using an AI service",
+        "autotranslate":  "auto-translate untranslated strings in .po files using an AI service",
+        "unfuzzy":        "clear fuzzy entries: remove #,fuzzy flag, #| comments, and empty msgstr for re-translation",
     }
 
     command_help = "\n".join(
@@ -479,6 +590,8 @@ def main():
         )
     elif command == "remove":
         do_removemessages(apps, languages)
+    elif command == "unfuzzy":
+        do_unfuzzy(apps, languages)
     else:
         fail('Unknown command "%s"' % command)
 
