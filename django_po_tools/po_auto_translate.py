@@ -242,9 +242,9 @@ def translate_po_file(
     if project_path is None:
         project_path = os.getcwd()
     target = get_language_from_filepath(filepath)
-    if target in ['zh-hans', 'zh_hans', 'zh']:
+    if target in ['zh-hans', 'zh_hans', 'zh', 'zh_CN', 'zh-CN', 'zh-simplified']:
         target = "zh-cn"
-    if target in ['zh-hant', 'zh_hant']:
+    if target in ['zh-hant', 'zh_hant', 'zh_TW', 'zh-TW', 'zh-traditional']:
         target = "zh-tw"
 
     po = polib.pofile(filepath)
