@@ -128,7 +128,7 @@ def gather_project_context(project_path, max_chars=6000):
     return "\n\n".join(snippets)
 
 
-def translate_batch_with_claude(texts, source, target, project_context="", api_key=None, model="claude-haiku-4-5-20251001", domain=""):
+def translate_batch_with_claude(texts, source, target, project_context="", api_key=None, model="claude-haiku-4-5-20251001", domain="", max_tokens=16384):
     """
     Translate a list of strings from *source* to *target* using the Claude API.
 
@@ -179,12 +179,20 @@ def translate_batch_with_claude(texts, source, target, project_context="", api_k
 
     message = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=max_tokens,
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
     )
 
     raw = message.content[0].text.strip()
+
+    # Detect truncated responses (stop_reason != "end_turn")
+    if message.stop_reason != "end_turn":
+        raise ValueError(
+            "Claude response was truncated (stop_reason=%s, max_tokens=%d). "
+            "Try reducing --batch-size or increasing --max-tokens.\n"
+            "Partial response:\n%s" % (message.stop_reason, max_tokens, raw[:500])
+        )
 
     # Extract JSON array from the response (the model may wrap it in markdown fences)
     json_match = re.search(r'\[.*\]', raw, re.DOTALL)
@@ -222,6 +230,7 @@ def translate_po_file(
     batch_size=500,
     model="claude-haiku-4-5-20251001",
     domain="",
+    max_tokens=16384,
 ):
     """
     Auto-translate untranslated entries in a .po file.
@@ -238,6 +247,7 @@ def translate_po_file(
     :param batch_size: number of strings sent to Claude per API call (default: 500)
     :param model: Anthropic model to use (default: claude-haiku-4-5-20251001)
     :param domain: application domain description (e.g. "paint dosing systems for the construction industry")
+    :param max_tokens: max output tokens for Claude API calls (default: 16384)
     """
     if project_path is None:
         project_path = os.getcwd()
@@ -301,6 +311,7 @@ def translate_po_file(
                     api_key=api_key,
                     model=model,
                     domain=domain,
+                    max_tokens=max_tokens,
                 )
                 for i, (entry, translation_raw) in enumerate(zip(batch_entries, translations)):
                     tokens, trailing_punct = meta_batch[i]
@@ -419,6 +430,12 @@ def main():
         default="claude-haiku-4-5-20251001",
         help="Anthropic model to use (default: claude-haiku-4-5-20251001, Claude engine only)",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=16384,
+        help="Max output tokens for Claude API calls (default: 16384, Claude engine only)",
+    )
     parsed = parser.parse_args()
 
     translate_po_file(
@@ -432,6 +449,7 @@ def main():
         api_key=parsed.api_key,
         batch_size=parsed.batch_size,
         model=parsed.model,
+        max_tokens=parsed.max_tokens,
     )
 
 

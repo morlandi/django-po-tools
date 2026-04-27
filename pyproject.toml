@@ -32,6 +32,7 @@ classifiers = [
 dependencies = [
     "polib",
     "deep-translator",
+    "tabulate",
 ]
 
 [project.optional-dependencies]

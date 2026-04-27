@@ -17,6 +17,9 @@ import shutil
 import sys
 import configparser
 
+import polib
+from tabulate import tabulate
+
 from django_po_tools.po_auto_translate import translate_po_file, gather_project_context
 
 DRY_RUN = False
@@ -152,7 +155,7 @@ def do_makemessages(apps, languages):
         run_command(command)
 
 
-def do_auto_translatemessages(apps, languages, fuzzy, engine="google", project_path=None, api_key=None, batch_size=500, model="claude-haiku-4-5-20251001", domain=""):
+def do_auto_translatemessages(apps, languages, fuzzy, engine="google", project_path=None, api_key=None, batch_size=500, model="claude-haiku-4-5-20251001", domain="", max_tokens=16384):
     # Gather project context once for all apps/languages (Claude engine only)
     project_context = None
     if engine == "claude" and not DRY_RUN:
@@ -182,6 +185,7 @@ def do_auto_translatemessages(apps, languages, fuzzy, engine="google", project_p
                     batch_size=batch_size,
                     model=model,
                     domain=domain,
+                    max_tokens=max_tokens,
                 )
 
 
@@ -363,6 +367,115 @@ def do_removemessages(apps, languages):
                 print("Folder not found (skipped): %s" % folder)
 
 
+def collect_summary(apps, languages):
+    """
+    Collect translation statistics for each app/language combination.
+    Returns a list of dicts with keys: app, language, total, translated, fuzzy, untranslated.
+    """
+    summary = []
+    for app in sorted(apps):
+        app_path = get_app_path(app)
+        for language in sorted(languages):
+            po_file = os.path.join(app_path, "locale", language, "LC_MESSAGES", "django.po")
+            po_file = os.path.normpath(po_file)
+            if not os.path.isfile(po_file):
+                continue
+            po = polib.pofile(po_file)
+            # polib considers entries: translated (non-fuzzy with msgstr), fuzzy, untranslated
+            total = len([e for e in po if not e.obsolete])
+            fuzzy_entries = po.fuzzy_entries()
+            translated_entries = po.translated_entries()  # non-fuzzy translated
+            untranslated_entries = po.untranslated_entries()
+            summary.append({
+                "app": app,
+                "language": language,
+                "total": total,
+                "translated": len(translated_entries),
+                "fuzzy": len(fuzzy_entries),
+                "untranslated": len(untranslated_entries),
+            })
+    return summary
+
+
+def _colorize(text, color):
+    """Wrap text with ANSI color codes."""
+    colors = {
+        "red": "\x1b[1;31m",
+        "yellow": "\x1b[1;33m",
+        "green": "\x1b[1;32m",
+        "reset": "\x1b[0m",
+    }
+    return colors.get(color, "") + str(text) + colors["reset"]
+
+
+def _color_row(row_data, fuzzy, untranslated):
+    """Apply color to a row based on translation status."""
+    if untranslated > 0:
+        return [_colorize(cell, "red") for cell in row_data]
+    elif fuzzy > 0:
+        return [_colorize(cell, "yellow") for cell in row_data]
+    else:
+        return [_colorize(cell, "green") for cell in row_data]
+
+
+def print_summary(summary_data):
+    """
+    Print two summary tables:
+    1. "Translation Summary Details" — one row per app/language combination
+    2. "Translation Summary" — aggregated by language (one row per language)
+
+    Colors: red = has untranslated, yellow = has fuzzy, green = fully translated.
+    """
+    if not summary_data:
+        print("\nNo .po files found.")
+        return
+
+    # --- Details table ---
+    print("\nTranslation Summary Details:")
+    headers_detail = ["App", "Lang", "Total", "Translated", "Fuzzy", "Untranslated"]
+    rows_detail = []
+    totals = {"total": 0, "translated": 0, "fuzzy": 0, "untranslated": 0}
+
+    for row in summary_data:
+        row_data = [row["app"], row["language"], row["total"], row["translated"], row["fuzzy"], row["untranslated"]]
+        rows_detail.append(_color_row(row_data, row["fuzzy"], row["untranslated"]))
+        totals["total"] += row["total"]
+        totals["translated"] += row["translated"]
+        totals["fuzzy"] += row["fuzzy"]
+        totals["untranslated"] += row["untranslated"]
+
+    # Totals row (no color)
+    rows_detail.append(["TOTAL", "", totals["total"], totals["translated"], totals["fuzzy"], totals["untranslated"]])
+
+    print(tabulate(rows_detail, headers=headers_detail, tablefmt="simple", numalign="right", stralign="left"))
+
+    # --- Aggregated table (by language) ---
+    lang_totals = {}
+    for row in summary_data:
+        lang = row["language"]
+        if lang not in lang_totals:
+            lang_totals[lang] = {"total": 0, "translated": 0, "fuzzy": 0, "untranslated": 0}
+        lang_totals[lang]["total"] += row["total"]
+        lang_totals[lang]["translated"] += row["translated"]
+        lang_totals[lang]["fuzzy"] += row["fuzzy"]
+        lang_totals[lang]["untranslated"] += row["untranslated"]
+
+    print("\nTranslation Summary:")
+    headers_agg = ["Lang", "Total", "Translated", "Fuzzy", "Untranslated"]
+    rows_agg = []
+
+    for lang in sorted(lang_totals):
+        t = lang_totals[lang]
+        row_data = [lang, t["total"], t["translated"], t["fuzzy"], t["untranslated"]]
+        rows_agg.append(_color_row(row_data, t["fuzzy"], t["untranslated"]))
+
+    # Totals row (no color)
+    rows_agg.append(["TOTAL", totals["total"], totals["translated"], totals["fuzzy"], totals["untranslated"]])
+
+    print(tabulate(rows_agg, headers=headers_agg, tablefmt="simple", numalign="right", stralign="left"))
+    print()
+
+
 def do_installmessages(apps, languages, source_folder):
     def find_candidate(base_folder, candidates, extension):
         for candidate in candidates:
@@ -460,6 +573,7 @@ def main():
         "remove":         "remove the locale/LANGUAGE folder (and its .po/.mo files) for the given app(s)",
         "autotranslate":  "auto-translate untranslated strings in .po files using an AI service",
         "unfuzzy":        "clear fuzzy entries: remove #,fuzzy flag, #| comments, and empty msgstr for re-translation",
+        "summary":        "display translation statistics for .po files",
     }
 
     command_help = "\n".join(
@@ -533,6 +647,12 @@ def main():
         default="claude-haiku-4-5-20251001",
         help="Anthropic model to use (default: claude-haiku-4-5-20251001, claude engine only)",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=16384,
+        help="Max output tokens for Claude API calls (default: 16384, claude engine only)",
+    )
     parsed = parser.parse_args()
 
     command = parsed.command
@@ -587,13 +707,21 @@ def main():
             batch_size=parsed.batch_size,
             model=parsed.model,
             domain=domain,
+            max_tokens=parsed.max_tokens,
         )
     elif command == "remove":
         do_removemessages(apps, languages)
     elif command == "unfuzzy":
         do_unfuzzy(apps, languages)
+    elif command == "summary":
+        pass  # summary is printed below for all commands
     else:
         fail('Unknown command "%s"' % command)
+
+    # Print summary at the end of every command
+    if not DRY_RUN:
+        summary_data = collect_summary(apps, languages)
+        print_summary(summary_data)
 
     print("done.")
 
